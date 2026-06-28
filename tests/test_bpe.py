@@ -1,4 +1,10 @@
-from cs336.tokenizer.bpe import count_pairs, merge_pair, pretokenize, train_bpe
+from cs336.tokenizer.bpe import (
+    BPETokenizer,
+    count_pairs,
+    merge_pair,
+    pretokenize,
+    train_bpe,
+)
 
 
 def test_merge_pair_replaces_all_occurrences():
@@ -75,3 +81,34 @@ def test_train_bpe_adds_special_tokens_and_never_merges_them():
     # no merge ever contains bytes spanning the special token
     for a, b in merges:
         assert b"<|endoftext|>" not in a + b
+
+
+def test_tokenizer_roundtrip_plain_text():
+    vocab, merges = train_bpe("the cat sat on the mat", vocab_size=300, special_tokens=[])
+    tok = BPETokenizer(vocab, merges)
+    ids = tok.encode("the cat sat")
+    assert all(isinstance(i, int) for i in ids)
+    assert tok.decode(ids) == "the cat sat"
+
+
+def test_tokenizer_applies_merges_to_shrink_sequence():
+    # after training, "the" should encode to fewer ids than its 3 raw bytes
+    vocab, merges = train_bpe("the the the the", vocab_size=300, special_tokens=[])
+    tok = BPETokenizer(vocab, merges)
+    assert len(tok.encode("the")) < len(b"the")
+
+
+def test_tokenizer_handles_special_token_as_single_id():
+    vocab, merges = train_bpe("hello world", vocab_size=300, special_tokens=["<|endoftext|>"])
+    tok = BPETokenizer(vocab, merges, special_tokens=["<|endoftext|>"])
+    special_id = next(i for i, b in vocab.items() if b == b"<|endoftext|>")
+    ids = tok.encode("hello<|endoftext|>world")
+    assert special_id in ids
+    assert tok.decode(ids) == "hello<|endoftext|>world"
+
+
+def test_tokenizer_roundtrip_multibyte_unicode():
+    text = "héllo 世界"
+    vocab, merges = train_bpe(text, vocab_size=320, special_tokens=[])
+    tok = BPETokenizer(vocab, merges)
+    assert tok.decode(tok.encode(text)) == text

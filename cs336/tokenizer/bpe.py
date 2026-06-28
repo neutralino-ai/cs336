@@ -23,7 +23,7 @@ def count_pairs(sequences: list[tuple[list[int], int]]) -> dict[tuple[int, int],
     pair occurrence by its sequence's count."""
     counts: dict[tuple[int, int], int] = defaultdict(int)
     for seq, weight in sequences:
-        for a, b in zip(seq, seq[1:]):
+        for a, b in zip(seq, seq[1:], strict=False):
             counts[(a, b)] += weight
     return dict(counts)
 
@@ -74,6 +74,66 @@ def train_bpe(
         next_id += 1
 
     return vocab, merges
+
+
+class BPETokenizer:
+    """Encode/decode text with a trained byte-level BPE vocabulary."""
+
+    def __init__(
+        self,
+        vocab: dict[int, bytes],
+        merges: list[tuple[bytes, bytes]],
+        special_tokens: list[str] | None = None,
+    ):
+        self.vocab = vocab
+        self.merges = merges
+        self.special_tokens = special_tokens or []
+        self._token_to_id = {token: i for i, token in vocab.items()}
+        self._merge_ranks = {pair: rank for rank, pair in enumerate(merges)}
+        if self.special_tokens:
+            # match longest special tokens first so overlapping ones resolve greedily
+            ordered = sorted(self.special_tokens, key=len, reverse=True)
+            self._special_re = re.compile("(" + "|".join(re.escape(t) for t in ordered) + ")")
+        else:
+            self._special_re = None
+
+    def _bpe(self, token: str) -> list[int]:
+        pieces = [bytes([b]) for b in token.encode("utf-8")]
+        while len(pieces) >= 2:
+            # find the adjacent pair with the lowest (earliest) merge rank
+            best_rank = None
+            best_i = None
+            for i in range(len(pieces) - 1):
+                rank = self._merge_ranks.get((pieces[i], pieces[i + 1]))
+                if rank is not None and (best_rank is None or rank < best_rank):
+                    best_rank = rank
+                    best_i = i
+            if best_i is None:
+                break
+            pieces[best_i : best_i + 2] = [pieces[best_i] + pieces[best_i + 1]]
+        return [self._token_to_id[p] for p in pieces]
+
+    def encode(self, text: str) -> list[int]:
+        if self._special_re is None:
+            segments = [text]
+        else:
+            segments = self._special_re.split(text)
+
+        ids: list[int] = []
+        special_set = set(self.special_tokens)
+        for segment in segments:
+            if not segment:
+                continue
+            if segment in special_set:
+                ids.append(self._token_to_id[segment.encode("utf-8")])
+            else:
+                for token in pretokenize(segment):
+                    ids.extend(self._bpe(token))
+        return ids
+
+    def decode(self, ids: list[int]) -> str:
+        data = b"".join(self.vocab[i] for i in ids)
+        return data.decode("utf-8", errors="replace")
 
 
 def merge_pair(seq: list[int], pair: tuple[int, int], new_id: int) -> list[int]:
