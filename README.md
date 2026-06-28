@@ -32,10 +32,21 @@ notes/         derivations, experiment logs
 ## Setup
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"          # core + torch + pytest/ruff
+pip install jupyterlab ipykernel  # interactive exploration
+python -m ipykernel install --user --name cs336 --display-name "CS336 (.venv)"
 pytest
 ```
+
+### Explore interactively
+
+```bash
+.venv/bin/jupyter lab
+```
+
+Open `notes/explore_tokenizer.ipynb` and select the **CS336 (.venv)** kernel — it
+walks through pre-tokenization, BPE training, and encode/decode end to end.
 
 ## Constraints
 
