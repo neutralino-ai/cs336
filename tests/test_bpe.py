@@ -1,4 +1,4 @@
-from cs336.tokenizer.bpe import count_pairs, merge_pair, pretokenize
+from cs336.tokenizer.bpe import count_pairs, merge_pair, pretokenize, train_bpe
 
 
 def test_merge_pair_replaces_all_occurrences():
@@ -44,3 +44,34 @@ def test_pretokenize_splits_contraction_and_punctuation():
 
 def test_pretokenize_separates_digits_from_letters():
     assert pretokenize("abc123") == ["abc", "123"]
+
+
+def test_train_bpe_base_vocab_has_256_bytes():
+    vocab, merges = train_bpe("ab", vocab_size=256, special_tokens=[])
+    assert len(vocab) == 256
+    assert vocab[0] == b"\x00"
+    assert vocab[97] == b"a"
+    assert merges == []
+
+
+def test_train_bpe_merge_order_and_tiebreak():
+    # "aaab" -> bytes [97,97,97,98].
+    # round 1: (a,a) most frequent (count 2) -> merge to b"aa"
+    # round 2: tie at count 1 between (b"aa",b"a") and (b"a",b"b");
+    #          lexicographically greater pair (b"aa",b"a") wins -> b"aaa"
+    vocab, merges = train_bpe("aaab", vocab_size=258, special_tokens=[])
+    assert merges == [(b"a", b"a"), (b"aa", b"a")]
+    assert vocab[256] == b"aa"
+    assert vocab[257] == b"aaa"
+    assert len(vocab) == 258
+
+
+def test_train_bpe_adds_special_tokens_and_never_merges_them():
+    vocab, merges = train_bpe(
+        "aaab", vocab_size=300, special_tokens=["<|endoftext|>"]
+    )
+    # special token occupies an id and appears verbatim in the vocab
+    assert b"<|endoftext|>" in vocab.values()
+    # no merge ever contains bytes spanning the special token
+    for a, b in merges:
+        assert b"<|endoftext|>" not in a + b
