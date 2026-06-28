@@ -1,9 +1,12 @@
+import pytest
+
 from cs336.tokenizer.bpe import (
     BPETokenizer,
     count_pairs,
     merge_pair,
     pretokenize,
     train_bpe,
+    train_bpe_fast,
 )
 
 
@@ -112,3 +115,22 @@ def test_tokenizer_roundtrip_multibyte_unicode():
     vocab, merges = train_bpe(text, vocab_size=320, special_tokens=[])
     tok = BPETokenizer(vocab, merges)
     assert tok.decode(tok.encode(text)) == text
+
+
+# --- optimized trainer: must be byte-identical to the naive reference ---
+
+_EQUIV_CASES = [
+    ("aaab", 258, []),
+    ("the cat sat on the mat. " * 10, 320, []),
+    ("aaaaa bbbbb aaaaa ababab", 280, []),  # overlap-heavy
+    ("hello world hello there world", 300, ["<|endoftext|>"]),
+    ("héllo 世界 héllo 世界 abc", 330, []),
+]
+
+
+@pytest.mark.parametrize("text,vocab_size,special", _EQUIV_CASES)
+def test_train_bpe_fast_matches_naive(text, vocab_size, special):
+    v_slow, m_slow = train_bpe(text, vocab_size, special)
+    v_fast, m_fast = train_bpe_fast(text, vocab_size, special)
+    assert m_fast == m_slow
+    assert v_fast == v_slow

@@ -76,6 +76,70 @@ def train_bpe(
     return vocab, merges
 
 
+def train_bpe_fast(
+    text: str, vocab_size: int, special_tokens: list[str]
+) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+    """Optimized BPE training, byte-identical to :func:`train_bpe`.
+
+    Two changes over the naive version:
+
+    1. Pair counts are maintained incrementally — after a merge, only the words
+       that contained the merged pair are recounted (subtract their old pairs,
+       rewrite, add their new pairs), instead of recounting the whole corpus.
+    2. A ``pair -> {word indices}`` index ("dirty word" tracking) means each
+       merge touches only the affected words, not every word.
+
+    Selection of the winning pair still uses the same ``max`` with the same
+    ``(count, lexicographically-greatest-bytes)`` tiebreak, so the result is
+    identical to the reference implementation.
+    """
+    vocab: dict[int, bytes] = {i: bytes([i]) for i in range(256)}
+    next_id = 256
+    for token in special_tokens:
+        vocab[next_id] = token.encode("utf-8")
+        next_id += 1
+
+    words = [[list(seq), count] for seq, count in _word_counts(text, special_tokens).items()]
+
+    # Build initial pair counts and the pair -> word-index index in one pass.
+    pair_counts: dict[tuple[int, int], int] = defaultdict(int)
+    pair_to_words: dict[tuple[int, int], set[int]] = defaultdict(set)
+
+    def add_word(wi: int) -> None:
+        seq, weight = words[wi]
+        for a, b in zip(seq, seq[1:], strict=False):
+            pair_counts[(a, b)] += weight
+            pair_to_words[(a, b)].add(wi)
+
+    def remove_word(wi: int) -> None:
+        seq, weight = words[wi]
+        for a, b in zip(seq, seq[1:], strict=False):
+            pair_counts[(a, b)] -= weight
+            if pair_counts[(a, b)] <= 0:
+                del pair_counts[(a, b)]
+            pair_to_words[(a, b)].discard(wi)
+
+    for wi in range(len(words)):
+        add_word(wi)
+
+    merges: list[tuple[bytes, bytes]] = []
+    while len(vocab) < vocab_size:
+        if not pair_counts:
+            break
+        best = max(pair_counts, key=lambda p: (pair_counts[p], (vocab[p[0]], vocab[p[1]])))
+        merges.append((vocab[best[0]], vocab[best[1]]))
+        vocab[next_id] = vocab[best[0]] + vocab[best[1]]
+
+        # Only words containing `best` change; recount just those.
+        for wi in list(pair_to_words[best]):
+            remove_word(wi)
+            words[wi][0] = merge_pair(words[wi][0], best, next_id)
+            add_word(wi)
+        next_id += 1
+
+    return vocab, merges
+
+
 class BPETokenizer:
     """Encode/decode text with a trained byte-level BPE vocabulary."""
 
